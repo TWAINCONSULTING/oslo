@@ -1,0 +1,17 @@
+{
+  "name": "Oslo Rush",
+  "short_name": "Oslo Rush",
+  "description": "Et lynraskt løpespill gjennom et stilisert Oslo.",
+  "lang": "nb",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#dfeaf5",
+  "theme_color": "#0e2a47",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
