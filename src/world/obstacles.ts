@@ -124,8 +124,8 @@ export function createObstacle(id: string, span = 1, variant = 0): THREE.Group {
       const lampGeo = new THREE.BoxGeometry(0.16, 0.16, 0.1);
       const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0xff9c2e }));
       lamp.position.set(v % 2 === 0 ? -0.7 : 0.7, 0.92, 0);
-      lamp.name = 'lamp';
       group.add(lamp);
+      group.userData.lamp = lamp; // cached — no per-frame scene traversal
       addShadow(group, 2.1, 1.1);
       break;
     }
@@ -253,17 +253,36 @@ export class ObstacleManager {
       const centerD = obs.dCur + obs.len / 2;
       group.position.z = traveled - centerD;
       group.position.x = obs.cx;
-      // Warning lamps blink in sync.
-      const lamp = group.getObjectByName('lamp');
+      // Warning lamps blink in sync (cached reference — no traversal).
+      const lamp = group.userData.lamp as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | undefined;
       if (lamp) {
-        (lamp as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>).material.color.setHex(
-          Math.sin(elapsed * 6) > 0 ? 0xffb648 : 0xb35510
-        );
+        lamp.material.color.setHex(Math.sin(elapsed * 6) > 0 ? 0xffb648 : 0xb35510);
       }
     }
   }
 
   clear(): void {
     for (const uid of [...this.live.keys()]) this.despawn(uid);
+  }
+
+  /** Free GPU resources of every pooled prop (teardown only). */
+  dispose(): void {
+    this.clear();
+    for (const pool of this.pools.values()) {
+      for (const group of pool) {
+        group.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.geometry.dispose();
+            const mat = o.material as THREE.Material | THREE.Material[];
+            for (const m of Array.isArray(mat) ? mat : [mat]) {
+              // Shared materials (vertex-color, atlas, shadow) tolerate
+              // repeated dispose() calls.
+              m.dispose();
+            }
+          }
+        });
+      }
+    }
+    this.pools.clear();
   }
 }

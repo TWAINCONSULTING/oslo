@@ -188,9 +188,9 @@ export class Spawner {
     state: SolverState,
     extra: ActiveObstacle[] = [],
     strict = false
-  ): boolean {
+  ): { ok: boolean; rootBlocked: boolean } {
     const obstacles = this.solverObstacles(extra);
-    if (obstacles.length === 0) return true;
+    if (obstacles.length === 0) return { ok: true, rootBlocked: false };
     let endD = traveled;
     for (const o of obstacles) endD = Math.max(endD, o.d1);
     endD += 12;
@@ -202,9 +202,13 @@ export class Spawner {
       : {};
     // Always check both ends of the speed range: time-based actions cover
     // fewer meters at low speed and reaction windows shrink at high speed.
-    if (!solve({ ...base, ...opts, speed }).ok) return false;
-    if (highSpeed > speed * 1.01 && !solve({ ...base, ...opts, speed: highSpeed }).ok) return false;
-    return true;
+    const low = solve({ ...base, ...opts, speed });
+    if (!low.ok) return { ok: false, rootBlocked: low.rootBlocked ?? false };
+    if (highSpeed > speed * 1.01) {
+      const high = solve({ ...base, ...opts, speed: highSpeed });
+      if (!high.ok) return { ok: false, rootBlocked: high.rootBlocked ?? false };
+    }
+    return { ok: true, rootBlocked: false };
   }
 
   // -- intro ---------------------------------------------------------------
@@ -342,12 +346,16 @@ export class Spawner {
       weight: () => 4,
       build: (ctx) => {
         if (!movingTramsAllowed(ctx.t)) return null;
+        // Content-driven: any unlocked obstacle flagged canMove may approach.
+        const movers = obstacleWeightsAt(ctx.t).filter(([o]) => o.canMove);
+        if (!movers.length) return null;
+        const def = ctx.rng.weighted(movers);
         const lane = this.pickLane(ctx.rng);
         const safe = ctx.rng.pick(otherLanes(lane));
         return {
-          obstacles: [{ defId: 'tram', lanes: [lane], dOff: 0, vRel: DIFFICULTY.movingTramRelSpeed }],
+          obstacles: [{ defId: def.id, lanes: [lane], dOff: 0, vRel: DIFFICULTY.movingTramRelSpeed }],
           tokens: tokenLine(safe, -4, 8, 2.2),
-          length: OBSTACLES.tram.len + 2,
+          length: def.len + 2,
         };
       },
     },
@@ -453,7 +461,10 @@ export class Spawner {
 
     let guard = 0;
     while (this.cursor < traveled + DIFFICULTY.horizon && guard++ < 24) {
-      const projT = time + Math.max(0, this.cursor - traveled) / Math.max(1, speed);
+      // Project arrival time with the difficulty-curve speed, NOT the passed
+      // live speed: during the launch ramp the live speed is a fraction of the
+      // curve and would inflate projT, unlocking gated obstacles early.
+      const projT = time + Math.max(0, this.cursor - traveled) / Math.max(1, speedAt(time));
       const projSpeed = speedAt(projT);
       const ctx: PatternCtx = {
         t: projT,
@@ -480,7 +491,7 @@ export class Spawner {
           this.mkObstacle(o.defId, o.lanes, this.cursor + o.dOff, o.vRel ?? 0)
         );
 
-        if (!this.windowSolvable(traveled, time, speed, playerState, newObs, true)) continue;
+        if (!this.windowSolvable(traveled, time, speed, playerState, newObs, true).ok) continue;
 
         const unseen = built.obstacles.some((o) => !this.seenTypes.has(o.defId));
         this.obstacles.push(...newObs);
@@ -562,7 +573,15 @@ export class Spawner {
   revalidate(traveled: number, time: number, speed: number, state: SolverState): number[] {
     const removed: number[] = [];
     let guard = 0;
-    while (!this.windowSolvable(traveled, time, speed, state) && guard++ < 12) {
+    for (;;) {
+      if (guard++ >= 12) break;
+      const res = this.windowSolvable(traveled, time, speed, state);
+      if (res.ok) break;
+      // The strict solver cannot reason from a state that already skims an
+      // expanded hitbox (a close dodge the lenient game hitbox survives).
+      // Deleting the future route over that would be wrong — check again on
+      // the next tick from a clean state instead.
+      if (res.rootBlocked) break;
       const farIdx = this.farthestRemovableIndex(traveled);
       if (farIdx < 0) break;
       removed.push(this.obstacles[farIdx].uid);

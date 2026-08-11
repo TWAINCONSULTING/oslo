@@ -22,6 +22,11 @@ export class CameraRig {
   private smoothY = 0;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
+  // Per-frame scratch (no allocations in the render loop).
+  private menuPos = new THREE.Vector3();
+  private menuLook = new THREE.Vector3(0, 1.15, 0);
+  private followPos = new THREE.Vector3();
+  private followLook = new THREE.Vector3();
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(66, aspect, 0.1, 400);
@@ -66,22 +71,16 @@ export class CameraRig {
     this.smoothY += (s.playerY - this.smoothY) * (1 - Math.exp(-8 * dt));
 
     const menuA = s.elapsed * 0.13;
-    const menuPos = new THREE.Vector3(Math.sin(menuA) * 2.7, 1.8, Math.cos(menuA) * 2.7 + 0.6);
-    const menuLook = new THREE.Vector3(0, 1.15, 0);
-
-    const followPos = new THREE.Vector3(
-      this.smoothX * 0.55,
-      3.02 + this.smoothY * 0.45 - this.dip * 0.2,
-      6.1
-    );
-    const followLook = new THREE.Vector3(this.smoothX * 0.85, 1.35 + this.smoothY * 0.3, -7);
+    this.menuPos.set(Math.sin(menuA) * 2.7, 1.8, Math.cos(menuA) * 2.7 + 0.6);
+    this.followPos.set(this.smoothX * 0.55, 3.02 + this.smoothY * 0.45 - this.dip * 0.2, 6.1);
+    this.followLook.set(this.smoothX * 0.85, 1.35 + this.smoothY * 0.3, -7);
 
     if (this.mode === 'follow') {
-      this.pos.copy(menuPos).lerp(followPos, tt);
-      this.look.copy(menuLook).lerp(followLook, tt);
+      this.pos.copy(this.menuPos).lerp(this.followPos, tt);
+      this.look.copy(this.menuLook).lerp(this.followLook, tt);
     } else {
-      this.pos.copy(menuPos);
-      this.look.copy(menuLook);
+      this.pos.copy(this.menuPos);
+      this.look.copy(this.menuLook);
     }
 
     // Crash shake.

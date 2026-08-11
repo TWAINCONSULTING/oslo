@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { SCORING } from '../src/config/content';
+import { activeCollectible } from '../src/config/content';
 import { scoreFor } from '../src/core/scoring';
 import { loadData, resetHighScore, saveData } from '../src/core/storage';
 
 describe('scoring', () => {
-  it('score is distance plus token bonus', () => {
+  it('score is distance plus token bonus from the active collectible', () => {
+    const bonus = activeCollectible().value;
+    expect(bonus).toBeGreaterThan(0);
     expect(scoreFor(0, 0)).toBe(0);
     expect(scoreFor(123.9, 0)).toBe(123);
-    expect(scoreFor(100, 4)).toBe(100 + 4 * SCORING.tokenBonus);
-    expect(scoreFor(0.5, 1)).toBe(SCORING.tokenBonus);
+    expect(scoreFor(100, 4)).toBe(100 + 4 * bonus);
+    expect(scoreFor(0.5, 1)).toBe(bonus);
   });
 
   it('score grows with distance and tokens', () => {

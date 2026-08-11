@@ -36,6 +36,12 @@ export class SpeedLines {
     m.position.set(Math.cos(a) * r * 1.25, Math.sin(a) * r * 0.85, randomZ ? -3 - Math.random() * 12 : -15);
   }
 
+  dispose(): void {
+    this.group.removeFromParent();
+    this.lines[0]?.geometry.dispose();
+    this.mat.dispose();
+  }
+
   update(dt: number, speed: number, speedNorm: number): void {
     const target = Math.max(0, (speedNorm - 0.45) / 0.55) * 0.4;
     this.mat.opacity += (target - this.mat.opacity) * (1 - Math.exp(-4 * dt));

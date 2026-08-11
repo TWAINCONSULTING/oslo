@@ -39,8 +39,11 @@ export class AudioFX {
         return;
       }
     }
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+    // iOS Safari can leave the context in the non-standard 'interrupted'
+    // state after a phone call / Siri — treat anything not running (except
+    // 'closed') as resumable, or audio dies for the rest of the session.
+    if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
+      this.ctx.resume().catch(() => undefined);
     }
   }
 
@@ -49,7 +52,9 @@ export class AudioFX {
   }
 
   resume(): void {
-    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
+      this.ctx.resume().catch(() => undefined);
+    }
   }
 
   // -- helpers --------------------------------------------------------------

@@ -77,6 +77,13 @@ export interface SolveResult {
   endStateD?: number;
   /** True when the search aborted on the node budget (treated as not ok). */
   overflow?: boolean;
+  /**
+   * True when the START state already intersects an expanded obstacle box.
+   * The strict solver cannot reason from such a state (the lenient in-game
+   * hitbox may well survive it) — callers should treat this as inconclusive,
+   * not as an unsolvable route.
+   */
+  rootBlocked?: boolean;
 }
 
 /** Vertical jump position given elapsed airtime. Shared with the gameplay code. */
@@ -194,7 +201,7 @@ export function solve(opts: SolveOptions): SolveResult {
     for (const o of obstacles) {
       if (o.lane !== startNode.lane && !(startNode.change > 0 && o.lane === startNode.from)) continue;
       if (opts.startD < o.d0 - expand || opts.startD > o.d1 + expand) continue;
-      if (rt > o.y0 - margin && rb < o.y1 + margin) return { ok: false };
+      if (rt > o.y0 - margin && rb < o.y1 + margin) return { ok: false, rootBlocked: true };
     }
   }
 

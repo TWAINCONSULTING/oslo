@@ -36,7 +36,13 @@ npm run typecheck  # tsc --noEmit
 npm run build      # typecheck + production build into dist/
 npm run preview    # serve the production build
 npm run validate   # headless-browser E2E on a 390×844 viewport (build first)
-npm run icons      # regenerate PWA icons (needs local Chromium)
+npm run icons      # regenerate PWA icons
+```
+
+`validate` and `icons` drive a headless Chromium. They default to the path used in the original dev container; on your own machine point them at any Chromium/Chrome binary:
+
+```bash
+CHROMIUM_PATH="$(which chromium || which google-chrome)" npm run validate
 ```
 
 ## Open it on your phone (same network)

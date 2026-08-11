@@ -10,8 +10,8 @@ export type GameAction = 'left' | 'right' | 'jump' | 'slide';
 const SWIPE_THRESHOLD = 26; // px
 /** Repeating the SAME direction within one drag needs a deliberately long pull. */
 const SWIPE_REPEAT_FACTOR = 2.6;
-const TAP_MAX_DIST = 12; // px
-const TAP_MAX_MS = 350;
+const TAP_MAX_DIST = 16; // px — forgiving: thumbs drift on a moving tram
+const TAP_MAX_MS = 450;
 
 export class Input {
   private el: HTMLElement;
@@ -34,8 +34,11 @@ export class Input {
 
     el.addEventListener('pointerdown', this.handleDown);
     el.addEventListener('pointermove', this.handleMove);
-    el.addEventListener('pointerup', this.handleUp);
-    el.addEventListener('pointercancel', this.handleCancel);
+    // Up/cancel are tracked on window in the CAPTURE phase: overlay widgets
+    // stopPropagation() their pointerup, which must never leave the swipe
+    // tracker holding a stale pointerId.
+    window.addEventListener('pointerup', this.handleUp, true);
+    window.addEventListener('pointercancel', this.handleCancel, true);
     window.addEventListener('keydown', this.handleKey);
     // Belt & braces against browser gestures during play.
     el.addEventListener('touchmove', this.preventDefault, { passive: false });
@@ -47,10 +50,11 @@ export class Input {
     const el = this.el;
     el.removeEventListener('pointerdown', this.handleDown);
     el.removeEventListener('pointermove', this.handleMove);
-    el.removeEventListener('pointerup', this.handleUp);
-    el.removeEventListener('pointercancel', this.handleCancel);
+    window.removeEventListener('pointerup', this.handleUp, true);
+    window.removeEventListener('pointercancel', this.handleCancel, true);
     window.removeEventListener('keydown', this.handleKey);
     el.removeEventListener('touchmove', this.preventDefault);
+    el.removeEventListener('gesturestart' as keyof HTMLElementEventMap, this.preventDefault as EventListener);
     el.removeEventListener('dblclick', this.preventDefault);
   }
 
@@ -59,18 +63,18 @@ export class Input {
   };
 
   private handleDown = (e: PointerEvent): void => {
-    if (this.pointerId !== null) return;
+    // Ignore additional fingers, but a re-down of the tracked id (stale after
+    // a swallowed pointerup) restarts the gesture cleanly.
+    if (this.pointerId !== null && this.pointerId !== e.pointerId) return;
     this.pointerId = e.pointerId;
     this.startX = this.armX = e.clientX;
     this.startY = this.armY = e.clientY;
     this.startT = performance.now();
     this.moved = false;
     this.lastDir = null;
-    try {
-      this.el.setPointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
+    // No setPointerCapture here: capturing would retarget pointerup away from
+    // overlay buttons (retry, toggles) and silently break them. The element is
+    // full-screen, so moves bubble to it anyway.
   };
 
   private handleMove = (e: PointerEvent): void => {
@@ -97,6 +101,8 @@ export class Input {
   private handleUp = (e: PointerEvent): void => {
     if (e.pointerId !== this.pointerId) return;
     this.pointerId = null;
+    // A release over the debug panel only clears tracking — no game tap.
+    if ((e.target as Element | null)?.closest?.('#debug')) return;
     const dist = Math.hypot(e.clientX - this.startX, e.clientY - this.startY);
     const dt = performance.now() - this.startT;
     if (!this.moved && dist < TAP_MAX_DIST && dt < TAP_MAX_MS) {

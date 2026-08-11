@@ -33,7 +33,8 @@ const svg = (pad) => `
   <path d="M48 66 L64 34 L80 66" fill="none" stroke="#0e2a47" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+const executablePath = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+const browser = await chromium.launch({ executablePath });
 const page = await browser.newPage();
 
 async function render(size, padded, name) {

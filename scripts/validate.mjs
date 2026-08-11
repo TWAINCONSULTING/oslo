@@ -50,7 +50,10 @@ await new Promise((resolve, reject) => {
 });
 const BASE = `http://localhost:${PORT}`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+// Override with CHROMIUM_PATH on machines without the preinstalled browser
+// (e.g. CHROMIUM_PATH="$(which chromium)" npm run validate).
+const executablePath = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+const browser = await chromium.launch({ executablePath });
 
 function collectErrors(page, sink) {
   page.on('console', (msg) => {
@@ -119,10 +122,15 @@ console.log('\n— Session 1: menu, gestures, obstacle variety (debug, seeded) �
   // a few fps, so fixed sleeps would race the next frame).
   const reach = async (fn, label) => {
     const ok = await page
-      .waitForFunction(fn, { timeout: 2500 })
+      .waitForFunction(fn, undefined, { timeout: 2500 })
       .then(() => true)
       .catch(() => false);
     check(ok, label);
+    if (!ok) {
+      const st = await S(page);
+      const actions = await page.evaluate(() => window.__osloRush.actions.join(' '));
+      console.log(`    state: ${JSON.stringify(st)}\n    actions: ${actions}`);
+    }
   };
 
   // Touch-style gestures (pointer events). The run always starts in lane 1.
@@ -164,7 +172,7 @@ console.log('\n— Session 1: menu, gestures, obstacle variety (debug, seeded) �
   const mid = await S(page);
   check(mid.phase === 'running' && mid.distance > 100, `still running at ${mid.distance | 0}m (invincible)`);
   check(mid.speed > 8, `speed increased to ${mid.speed.toFixed(1)} m/s`);
-  await page.screenshot({ path: join(shotDir, '2-gameplay.png') });
+  await page.screenshot({ path: join(shotDir, '4-debug.png') });
 
   // Landscape + back (resize robustness).
   await page.setViewportSize({ width: 844, height: 390 });
@@ -190,13 +198,28 @@ console.log('\n— Session 2: game over, high score, restart, pause —');
 
   // Hint should appear for a first-time player.
   const hintShown = await page
-    .waitForFunction(() => document.querySelector('.hud-hint')?.classList.contains('show'), { timeout: 4000 })
+    .waitForFunction(() => document.querySelector(".hud-hint")?.classList.contains("show"), undefined, { timeout: 4000 })
     .then(() => true)
     .catch(() => false);
   check(hintShown, 'control hint appears early');
 
+  // Clean mid-run screenshot (no debug overlay) for the README.
+  await page
+    .waitForFunction(() => window.__osloRush.distance > 42, undefined, { timeout: 30000 })
+    .catch(() => undefined);
+  await page.screenshot({ path: join(shotDir, '2-gameplay.png') });
+
   // No input → the intro overhead bar guarantees a collision.
-  await page.waitForFunction(() => window.__osloRush.phase === 'gameover', { timeout: 40000 });
+  const crashed = await page
+    .waitForFunction(() => window.__osloRush.phase === 'gameover', undefined, { timeout: 40000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!crashed) {
+    const st = await S(page);
+    console.log(`    state: ${JSON.stringify(st)}`);
+    console.log(`    errors so far: ${errors.join(' | ') || 'none'}`);
+    throw new Error('no-input run did not end in game over');
+  }
   console.log('  ✓ collision ends the run (no-input crash)');
   await page.waitForTimeout(500);
   check(await page.locator('.go-retry').isVisible(), 'game-over screen with retry button');
@@ -215,7 +238,15 @@ console.log('\n— Session 2: game over, high score, restart, pause —');
   check(re.score < 20, 'score reset');
 
   // Second restart via game-over tap (repeated restarts).
-  await page.waitForFunction(() => window.__osloRush.phase === 'gameover', { timeout: 40000 });
+  const crashed2 = await page
+    .waitForFunction(() => window.__osloRush.phase === 'gameover', undefined, { timeout: 40000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!crashed2) {
+    console.log(`    state: ${JSON.stringify(await S(page))}`);
+    console.log(`    errors so far: ${errors.join(' | ') || 'none'}`);
+    throw new Error('second no-input run did not end in game over');
+  }
   await page.waitForTimeout(500);
   await page.mouse.click(195, 700);
   await page.waitForTimeout(400);

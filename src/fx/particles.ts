@@ -143,4 +143,11 @@ export class Particles {
     for (const p of this.items) p.active = false;
     this.hide();
   }
+
+  dispose(): void {
+    this.mesh.removeFromParent();
+    this.mesh.geometry.dispose();
+    (this.mesh.material as THREE.Material).dispose();
+    this.mesh.dispose();
+  }
 }

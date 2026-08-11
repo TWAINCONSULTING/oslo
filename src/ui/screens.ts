@@ -29,8 +29,13 @@ export class Screens {
     this.root.id = 'screens';
     parent.appendChild(this.root);
 
+    const titleWords = STRINGS.title.split(' ');
+    const titleHtml =
+      titleWords.length > 1
+        ? `${titleWords[0]}<span class="accent">&nbsp;${titleWords.slice(1).join(' ')}</span>`
+        : STRINGS.title;
     this.start = this.makeScreen(`
-      <div class="title">OSLO<span class="accent">&nbsp;RUSH</span></div>
+      <div class="title">${titleHtml}</div>
       <div class="subtitle">${STRINGS.subtitle}</div>
       <div class="chip start-best">${STRINGS.best}: <strong>0</strong></div>
       <div class="tap-cta">${STRINGS.tapToStart}</div>

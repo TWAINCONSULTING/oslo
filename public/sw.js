@@ -30,18 +30,35 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+  // Navigations (index.html) go network-first so a new deploy is picked up on
+  // the next visit; the cached copy is only an offline fallback. Hashed build
+  // assets are immutable and safe to serve cache-first.
+  const isNavigation = req.mode === 'navigate' || req.destination === 'document';
+  if (isNavigation) {
+    event.respondWith(
+      fetch(req)
         .then((res) => {
-          if (res.ok && res.type === 'basic') {
+          if (res.ok) {
             const copy = res.clone();
             caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
           }
           return res;
         })
-        .catch(() => cached);
+        .catch(() => caches.match(req).then((cached) => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        if (res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
+        }
+        return res;
+      });
     })
   );
 });

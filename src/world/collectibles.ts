@@ -129,4 +129,14 @@ export class TokenManager {
     for (let i = 0; i < CAPACITY; i++) this.free(i);
     this.byUid.clear();
   }
+
+  dispose(): void {
+    this.clear();
+    for (const mesh of [this.disc, this.rim]) {
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      mesh.dispose();
+    }
+  }
 }

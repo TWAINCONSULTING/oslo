@@ -13,8 +13,10 @@ export class Backdrop {
   readonly sun: THREE.DirectionalLight;
   private sprite: THREE.Sprite;
   private group: THREE.Group;
+  private scene: THREE.Scene;
 
   constructor(scene: THREE.Scene, theme: ThemeDef) {
+    this.scene = scene;
     // Sky gradient.
     const skyTop = new THREE.Color(theme.skyTop);
     const skyHor = new THREE.Color(theme.skyHorizon);
@@ -117,6 +119,19 @@ export class Backdrop {
     this.group.add(water);
 
     scene.add(this.group);
+  }
+
+  dispose(): void {
+    this.scene.remove(this.group, this.hemi, this.sun);
+    (this.scene.background as THREE.Texture | null)?.dispose?.();
+    this.scene.background = null;
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+      if (o instanceof THREE.Sprite) o.material.dispose();
+    });
   }
 }
 

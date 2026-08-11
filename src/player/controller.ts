@@ -73,6 +73,7 @@ export class PlayerController {
 
     // Consume buffered inputs that are currently executable.
     const keep: Array<{ action: GameAction; at: number }> = [];
+    let laneExecuted: GameAction | null = null;
     for (const item of this.buffer) {
       if (this.now - item.at > PHYSICS.inputBufferTime) continue; // stale
       let executed = false;
@@ -81,12 +82,25 @@ export class PlayerController {
         case 'right': {
           const dir = item.action === 'left' ? -1 : 1;
           const next = this.targetLane + dir;
-          if (this.changeT <= 0.05 && next >= 0 && next <= 2) {
+          if (next < 0 || next > 2) {
+            // Swiping into a wall: discard immediately. Keeping it buffered
+            // would let it fire later and reverse a subsequent dodge.
+            executed = true;
+            break;
+          }
+          // A just-executed lane change purges buffered opposite swipes
+          // (almost always jitter); same-direction stays queued (double-move).
+          if (laneExecuted && laneExecuted !== item.action) {
+            executed = true;
+            break;
+          }
+          if (this.changeT <= 0.05) {
             this.fromLane = this.targetLane;
             this.fromX = this.x;
             this.targetLane = next;
             this.changeT = PHYSICS.laneChangeTime;
             ev.laneChanged = true;
+            laneExecuted = item.action;
             executed = true;
           }
           break;

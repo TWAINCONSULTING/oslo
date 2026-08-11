@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CONTENT, DIFFICULTY, OBSTACLES, activeTheme, laneX } from '../config/content';
+import { CONTENT, DIFFICULTY, OBSTACLES, activeCollectible, activeTheme, laneX } from '../config/content';
 import { speedAt } from '../world/difficulty';
 import { Spawner } from '../world/spawner';
 import { Environment } from '../world/environment';
@@ -40,6 +40,7 @@ export class Game {
   private loop: Loop;
 
   // world
+  private backdrop: Backdrop;
   private env: Environment;
   private obstacleMgr: ObstacleManager;
   private tokenMgr: TokenManager;
@@ -89,6 +90,9 @@ export class Game {
   // debug hitboxes
   private hitboxHelpers = new Map<number | 'player', THREE.Box3Helper>();
 
+  /** Cancels every window/document listener this instance registered. */
+  private aborter = new AbortController();
+
   constructor(private root: HTMLElement, private options: GameOptions) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.dprCap = Math.min(window.devicePixelRatio || 1, 2);
@@ -101,7 +105,7 @@ export class Game {
     this.cameraRig = new CameraRig(window.innerWidth / window.innerHeight);
     this.scene.add(this.cameraRig.camera);
 
-    new Backdrop(this.scene, theme);
+    this.backdrop = new Backdrop(this.scene, theme);
     this.env = new Environment(this.scene, theme, this.options.seed ?? randomSeed());
     this.obstacleMgr = new ObstacleManager(this.scene);
     this.tokenMgr = new TokenManager(this.scene);
@@ -124,9 +128,15 @@ export class Game {
     this.screens.onToggleSound = () => {
       const on = !loadData().sound;
       saveData({ sound: on });
-      this.audio.unlock();
-      this.audio.setEnabled(on);
-      if (on) this.audio.click();
+      // While paused the context stays suspended — unlocking here would let
+      // the ambience play over the frozen pause screen.
+      if (!this.paused) {
+        this.audio.unlock();
+        this.audio.setEnabled(on);
+        if (on) this.audio.click();
+      } else {
+        this.audio.setEnabled(on);
+      }
       return on;
     };
     this.screens.onToggleVibration = () => {
@@ -144,18 +154,30 @@ export class Game {
     );
 
     if (options.debug) this.enableDebug();
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyD' && e.ctrlKey && e.shiftKey) this.enableDebug();
-    });
-
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.doPause();
-    });
-    window.addEventListener('blur', () => this.doPause());
-    window.addEventListener('resize', () => this.onResize());
-    window.addEventListener('orientationchange', () => {
-      window.setTimeout(() => this.onResize(), 250);
-    });
+    const sig = { signal: this.aborter.signal };
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.code === 'KeyD' && e.ctrlKey && e.shiftKey) this.enableDebug();
+      },
+      sig
+    );
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.hidden) this.doPause();
+      },
+      sig
+    );
+    window.addEventListener('blur', () => this.doPause(), sig);
+    window.addEventListener('resize', () => this.onResize(), sig);
+    window.addEventListener(
+      'orientationchange',
+      () => {
+        window.setTimeout(() => this.onResize(), 250);
+      },
+      sig
+    );
 
     this.screens.showStart(data.high);
     this.loop = new Loop((dt) => this.frame(dt));
@@ -300,8 +322,10 @@ export class Game {
     this.score = scoreFor(this.traveled, this.tokensCollected);
     const data = loadData();
     const isRecord = this.score > data.high && this.score > 0;
+    // Longest distance is tracked independently of the score record.
+    saveData({ bestDistance: Math.max(data.bestDistance, Math.floor(this.traveled)) });
     if (isRecord) {
-      saveData({ high: this.score, bestDistance: Math.max(data.bestDistance, Math.floor(this.traveled)) });
+      saveData({ high: this.score });
       this.audio.record();
       vibrate(HAPTIC.record);
     }
@@ -316,7 +340,18 @@ export class Game {
   }
 
   private doPause(): void {
-    if (this.phase !== 'running' || this.paused) return;
+    if (this.phase !== 'running') return;
+    if (this.paused) {
+      // Backgrounded during the resume countdown: cancel it and re-pause
+      // properly (otherwise the resumed AudioContext keeps playing while the
+      // tab is hidden and the countdown fires into a stale frame on return).
+      if (this.resumeTimer > 0) {
+        this.resumeTimer = 0;
+        this.audio.suspend();
+        this.screens.showPause();
+      }
+      return;
+    }
     this.paused = true;
     this.resumeTimer = 0;
     this.audio.suspend();
@@ -489,14 +524,18 @@ export class Game {
       }
     }
 
-    // Pickups.
+    // Pickups (tolerances derived from the active collectible's radius).
     const hb = this.controller.hitbox();
+    const pickup = activeCollectible();
+    const zTol = pickup.radius * 1.33;
+    const xTol = pickup.radius + 0.05;
+    const yTol = pickup.radius * 0.6;
     for (const t of spawner.tokens) {
       if (t.collected) continue;
       const z = this.traveled - t.d;
-      if (z < -1.2 || z > 1.2) continue;
-      if (Math.abs(hb.x - laneX(t.lane)) > 0.95) continue;
-      if (t.y < hb.y0 - 0.55 || t.y > hb.y1 + 0.55) continue;
+      if (z < -zTol || z > zTol) continue;
+      if (Math.abs(hb.x - laneX(t.lane)) > xTol) continue;
+      if (t.y < hb.y0 - yTol || t.y > hb.y1 + yTol) continue;
       t.collected = true;
       this.tokenMgr.collect(t.uid);
       this.tokensCollected++;
@@ -507,12 +546,20 @@ export class Game {
       this.hud.tokenPop();
     }
 
-    // Collisions.
+    // Collisions. Swept in z while grounded: at top speed on a slow device a
+    // single clamped frame can cover more than a thin obstacle's window, so a
+    // point sample could tunnel straight through a barrier. While airborne we
+    // keep the point test (pro-player: landing edge cases stay forgiving).
     if (!this.debugPanel?.invincible) {
+      const grounded = this.controller.grounded;
       for (const obs of spawner.obstacles) {
         const zn = this.traveled - obs.dCur; // near face; negative while ahead
-        if (zn < -2 || zn - obs.len > 2) continue;
-        const zOverlap = zn - obs.len + 0.1 < hb.halfD && zn - 0.1 > -hb.halfD;
+        if (zn < -3 || zn - obs.len > 3) continue;
+        const frameSweep = grounded ? (this.speed + obs.vRel) * dts : 0;
+        const zPrev = zn - frameSweep;
+        // Segment [zPrev, zn] vs window: previous end must not be fully past,
+        // current end must have reached it.
+        const zOverlap = zPrev - obs.len + 0.1 < hb.halfD && zn - 0.1 > -hb.halfD;
         if (!zOverlap) continue;
         if (Math.abs(hb.x - obs.cx) >= hb.halfW + obs.hx - 0.14) continue;
         if (!(hb.y1 > obs.y0 + 0.06 && hb.y0 < obs.y1 - 0.06)) continue;
@@ -719,26 +766,42 @@ export class Game {
     }
   }
 
+  private disposeHelper(h: THREE.Box3Helper): void {
+    this.scene.remove(h);
+    h.geometry.dispose();
+    (h.material as THREE.Material).dispose();
+  }
+
   private removeHitboxHelper(uid: number): void {
     const h = this.hitboxHelpers.get(uid);
     if (h) {
-      this.scene.remove(h);
+      this.disposeHelper(h);
       this.hitboxHelpers.delete(uid);
     }
   }
 
   private clearHitboxHelpers(): void {
-    for (const h of this.hitboxHelpers.values()) this.scene.remove(h);
+    for (const h of this.hitboxHelpers.values()) this.disposeHelper(h);
     this.hitboxHelpers.clear();
   }
 
-  /** Tear down listeners and GPU resources (tests / hot reload). */
+  /** Tear down listeners, DOM and GPU resources (tests / hot reload). */
   dispose(): void {
     this.loop.stop();
+    this.aborter.abort();
     this.input.dispose();
+    this.clearHitboxHelpers();
+    this.obstacleMgr.dispose();
+    this.tokenMgr.dispose();
+    this.particles.dispose();
+    this.speedLines.dispose();
     this.env.dispose();
     this.character.dispose();
+    this.backdrop.dispose();
     this.debugPanel?.dispose();
+    this.audio.stopAmbience();
     this.renderer.dispose();
+    this.renderer.domElement.remove();
+    delete (window as unknown as { __osloRush?: unknown }).__osloRush;
   }
 }

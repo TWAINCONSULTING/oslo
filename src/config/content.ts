@@ -22,7 +22,6 @@ export const PHYSICS = {
   playerHalfW: 0.3, // generous: the player's box is narrow
   playerHalfD: 0.42,
   inputBufferTime: 0.18, // seconds an input stays buffered
-  actionCooldown: 0.1, // min seconds between accepted actions in-game
 } as const;
 
 /** X position of a lane center. Lane indices are 0 (left), 1 (center), 2 (right). */
@@ -327,11 +326,10 @@ export const AUDIO = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Scoring.
+// Scoring. The per-token bonus lives on the collectible definition (value).
 // ---------------------------------------------------------------------------
 export const SCORING = {
   pointsPerMeter: 1,
-  tokenBonus: 25,
 } as const;
 
 // ---------------------------------------------------------------------------
