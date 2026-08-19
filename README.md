@@ -1,45 +1,104 @@
 # oslo
 
-## Video transcription & synthesis
+Tooling for reviewing and learning from short-form video (Instagram reels,
+TikTok, YouTube, X) — built around AI security study notes.
 
-`scripts/transcribe_reel.py` downloads a public video URL (e.g. an Instagram
-reel), extracts the audio, and transcribes it with a local Whisper model —
-producing a JSON file with the caption, uploader, duration, and full
-transcript, ready to be read and synthesized.
+## Scripts
+
+### `scripts/analyze_video.py` — primary
+
+Fetches a video by URL (or reads a local file) and analyzes it with Gemini,
+which understands video natively: speech, visuals, and on-screen text
+together. Writes a markdown study note plus a JSON record.
 
 ```sh
-python3 scripts/transcribe_reel.py "https://www.instagram.com/reel/XXXXXXXXXXX/" --out ./transcripts
+export GEMINI_API_KEY=...          # https://aistudio.google.com/apikey
+
+python3 scripts/analyze_video.py "https://www.instagram.com/reel/XXXX/"
+python3 scripts/analyze_video.py ~/Downloads/clip.mp4 --model gemini-2.5-pro
+python3 scripts/analyze_video.py <source> --prompt-file my-prompt.txt
 ```
 
-Dependencies (`ffmpeg`, and the pip packages in `requirements.txt`) are
-installed automatically by `.claude/hooks/session-start.sh` on every Claude
-Code web session once this is merged to the default branch.
+The default prompt produces: summary, transcript, on-screen content,
+techniques/tools named, actionable takeaways, and an accuracy check. Override
+it with `--prompt` or `--prompt-file`.
 
-### Network access required
+### `scripts/transcribe_reel.py` — offline fallback
 
-This only works in a Claude Code environment whose network egress policy
-allows reaching:
+Transcribes with a local Whisper model instead of a cloud API. No API key and
+no per-video cost, but audio only — it does not see anything on screen. Needs
+`huggingface.co` reachable to fetch model weights on first run.
 
-- `instagram.com` and its CDN hosts (`cdninstagram.com`, `fbcdn.net`) — to
-  fetch the video
-- `huggingface.co` — to download the Whisper model weights on first use of a
-  given `--model` size (cached under `~/.cache/huggingface` after that)
+```sh
+python3 scripts/transcribe_reel.py "<url>" --model base
+```
 
-A narrow "package registries only" allowlist (the common default for coding
-environments) blocks both. Set the environment's network policy to allow
-broader/full internet access — see
-[the Claude Code on the web docs](https://code.claude.com/docs/en/claude-code-on-the-web)
-for how policies are configured per environment. A custom allowlist limited
-to just `instagram.com` is not reliable, since Instagram serves video from
-many rotating CDN subdomains.
+## Setup
 
-### Note on scope
+```sh
+apt-get install -y ffmpeg
+pip install -r requirements.txt
+```
 
-This downloads public content from third-party accounts (not content
-posted by this account), via an unofficial method (`yt-dlp`'s Instagram
-extractor). That's outside Instagram's Terms of Service for automated
-access, and the extractor can break whenever Instagram changes its site.
-Keep daily volume reasonable to reduce the chance of the source triggering
-rate limits or blocks. If most of the content to review is ever this
-account's own posts, the [Instagram Graph API](https://developers.facebook.com/docs/instagram-platform)
-is the sanctioned, more reliable alternative for that subset.
+## Network requirements
+
+Video download is the part most likely to be blocked. In a Claude Code web
+environment, egress is governed by the environment's network policy
+([docs](https://code.claude.com/docs/en/claude-code-on-the-web)).
+
+| Needs to be reachable | For |
+| --- | --- |
+| `instagram.com`, `cdninstagram.com`, `fbcdn.net` | Instagram download |
+| `tiktok.com`, `tiktokcdn.com` | TikTok download |
+| `youtube.com`, `googlevideo.com` | YouTube download |
+| `generativelanguage.googleapis.com` | Gemini analysis |
+| `huggingface.co` | Whisper weights (fallback script only) |
+
+A "package registries only" policy blocks all the video hosts, so
+`analyze_video.py` will fail at the download step with a tunnel/proxy error.
+Passing a **local file path** instead of a URL works under any policy, since
+no download is attempted.
+
+Because video hosts serve from many rotating CDN subdomains, a narrow custom
+allowlist tends to be brittle — broader internet access is more reliable.
+
+## Scope note
+
+`yt-dlp` fetches public third-party content through an unofficial extractor.
+That falls outside Instagram's and TikTok's terms for automated access, and
+extractors break whenever those sites change. Keep daily volume modest. For
+content posted by an account you control, the official
+[Instagram Graph API](https://developers.facebook.com/docs/instagram-platform)
+is the sanctioned and more stable route.
+
+## Optional: auto-install dependencies each session
+
+To have a Claude Code web session install `ffmpeg` and the pip requirements
+automatically, add `.claude/hooks/session-start.sh`:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then exit 0; fi
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  apt-get update -qq && apt-get install -y -qq ffmpeg
+fi
+pip install --break-system-packages --quiet -r "$CLAUDE_PROJECT_DIR/requirements.txt"
+```
+
+Make it executable and register it in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+          "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh" } ] }
+    ]
+  }
+}
+```
+
+This is left for a human to add deliberately: a `SessionStart` hook executes
+shell commands automatically at the start of every future session, so it
+should be reviewed rather than introduced by an agent.
