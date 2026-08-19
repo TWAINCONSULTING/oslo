@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+transcripts/
+
+# Downloaded video/audio artifacts — notes/*.md and *.json are kept
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.wav
